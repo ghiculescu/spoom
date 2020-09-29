@@ -82,6 +82,39 @@ module Spoom
           Spoom::Git.checkout(sha_before, path: path)
         end
 
+        desc "report", "produce a typing coverage report"
+        option :file, type: :string, default: "spoom_report.html", aliases: :f
+        def report
+          report = Spoom::Coverage.report
+          # Load the data
+          # Create the report
+          # Generate the html
+          File.write(options[:file], report.html)
+        end
+
+        desc "open", "open the typing coverage report"
+        option :file, type: :string, default: "spoom_report.html", aliases: :f
+        def open
+          exec "open #{options[:file]}"
+          # TODO
+        end
+
+        # git
+          # last commit
+          # last commit date
+          # last commit author
+          # nb commits
+        # sorbet
+          # sorbet version
+          # sorbet intro commit
+          # sorbet intro date
+        # timeline
+          # snapshot
+            # timestamp
+            # commit
+            # commit timestamp
+            # sorbet-metrics
+
         no_commands do
           def parse_date(string, option)
             return nil unless string
