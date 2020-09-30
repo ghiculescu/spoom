@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <title>spoom</title>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css">
+
+  <style>
+            .tooltip {
+              position: absolute;
+              top: 0;
+              left: 0;
+              text-align: center;
+              padding: 5px;
+              font: 12px sans-serif;
+              background: rgba(0, 0, 0, 0.1);
+              border: 0px;
+              border-radius: 4px;
+              pointer-events: none;
+              opacity: 0;
+          }
+
+.node {
+  cursor: pointer;
+}
+
+.node:hover {
+  stroke: #333;
+  stroke-width: 1px;
+}
+
+.node--leaf {
+  fill: white;
+}
+
+.label--dir {
+  font: 14px Arial, sans-serif;
+  text-anchor: middle;
+}
+
+.label--leaf {
+  font: 12px Arial, sans-serif;
+  text-anchor: middle;
+}
+
+.label--dir,
+.label--leaf,
+.node--root,
+.node--leaf {
+  pointer-events: none;
+}
+
+.tooltip {
+    position: absolute;
+    text-align: center;
+    padding: 5px;
+    font: 12px sans-serif;
+    background: rgba(0, 0, 0, 0.2);
+    border: 0px;
+    border-radius: 4px;
+    pointer-events: none;
+}
+
+  </style>
+</head>
+<body>
+  <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/js/bootstrap.min.js"></script>
+  <script src="https://d3js.org/d3.v4.min.js"></script>
+
+  <script>function strictnessColor(strictness) {
+  switch(strictness) {
+    case "false":
+      return "#db4437";
+    case "true":
+      return "#0f9d58";
+    case "strict":
+      return "#0a7340";
+    case "strong":
+      return "#064828";
+  }
+  return "#ccc";
+}
+
+var dirColor = d3.scaleLinear()
+  .domain([1, 0])
+  .range(["#0f9d58", "#db4437"])//, "#0f9d58", "#0a7340", "#064828"])
+  .interpolate(d3.interpolateRgb);
+
+function toPercent(value, sum) {
+  return Math.round(value * 100 / sum) + "%";
+}
+
+function treeHeight(root, height = 0) {
+  height += 1;
+
+  if (root.children && root.children.length > 0)
+    return Math.max(...root.children.map(child => treeHeight(child, height)));
+  else
+    return height;
+}
+
+function zoom(d) {
+  var focus0 = focus; focus = d;
+
+  var transition = d3.transition()
+      .duration(d3.event.altKey ? 7500 : 750)
+      .tween("zoom", function(d) {
+        var i = d3.interpolateZoom(view, [focus.x, focus.y, focus.r * 2]);
+        return function(t) { zoomTo(i(t)); };
+      });
+
+  transition.selectAll("text")
+    .filter(function(d) { return d.parent === focus || this.style.display === "inline"; })
+      .style("fill-opacity", function(d) { return d.parent === focus ? 1 : 0; })
+      .on("start", function(d) { if (d.parent === focus) this.style.display = "inline"; })
+      .on("end", function(d) { if (d.parent !== focus) this.style.display = "none"; });
+}
+
+var tooltip = d3.select("body")
+  .append("div")
+    .append("div")
+      .attr("class", "tooltip");
+
+var tooltipSigils = function(d) {
+  tooltip
+    .style("left", (d3.event.pageX + 20) + "px")
+    .style("top", (d3.event.pageY) + "px")
+    .html("<b>typed: " + d.data.key + "<br>" + toPercent(d.data.value, sum_sigils) +
+      " - " + d.data.value + " files</b>")
+}
+
+var pie_size = 200;
+var pie_radius = pie_size / 2;
+
+var arcGenerator = d3.arc()
+  .innerRadius(50)
+  .outerRadius(pie_radius);
+
+var tooltip_calls = function(d) {
+  tooltip
+    .style("left", (d3.event.pageX + 20) + "px")
+    .style("top", (d3.event.pageY) + "px")
+    .html("<b>" + toPercent(d.data.value, sum_calls) +
+      (d.data.key == "true" ? " checked" : " unchecked") +
+      "</b><br>" + d.data.value + " calls");
+}
+
+var tooltip_sigils = function(d) {
+  tooltip
+    .style("left", (d3.event.pageX + 20) + "px")
+    .style("top", (d3.event.pageY) + "px")
+    .html("<b>typed: " + d.data.key + "<br>" + toPercent(d.data.value, sum_sigils) +
+      " - " + d.data.value + " files</b>")
+}
+
+var tooltip_sigs = function(d) {
+  tooltip
+    .style("left", (d3.event.pageX + 20) + "px")
+    .style("top", (d3.event.pageY) + "px")
+    .html("<b>" + toPercent(d.data.value, sum_sigs) +
+      (d.data.key == "true" ? " with" : " without") +
+      " a signature</b><br>" + d.data.value + " methods");
+}
+
+</script>
+
+  <div class="px-5 py-4">
+<h1 class="display-3">
+  spoom
+  <span class="badge badge-pill badge-dark" style="font-size: 20%;"></span>
+</h1>
+<br>
+
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Sigils</h5>
+    <div class="row row-cols-1 row-cols-md-2">
+      <div class="col mb-6">
+        <div id="pie_sigils"></div>
+        <script>var pie_sigils = d3.pie().value(function(d) { return d.value; });
+var json_sigils = {"true":50,"strict":12};
+var data_sigils = pie_sigils(d3.entries(json_sigils));
+var sum_sigils = d3.sum(data_sigils, function(d) { return d.data.value; });
+
+var svg_sigils = d3.select("#pie_sigils")
+  .append("svg")
+    .attr("width", pie_size)
+    .attr("height", pie_size)
+    .append("g")
+      .attr("transform", "translate(" + pie_size / 2 + "," + pie_size / 2 + ")");
+
+svg_sigils.selectAll("arcs")
+  .data(data_sigils)
+  .enter()
+    .append('path')
+      .attr('fill', function(d) { return strictnessColor(d.data.key); })
+      .attr('d', arcGenerator)
+      .on("mouseover", function(d) { tooltip.style("opacity", 1); })
+      .on("mousemove", tooltip_sigils)
+      .on("mouseleave", function(d) { tooltip.style("opacity", 0); });
+
+svg_sigils.selectAll("labels")
+  .data(data_sigils)
+  .enter()
+    .append('text')
+    .text(function(d) { return toPercent(d.data.value, sum_sigils); })
+    .attr("transform", function(d) { return "translate(" + arcGenerator.centroid(d) + ")"; })
+    .style("text-anchor", "middle")
+    .style("font-size", "14px")
+    .style("fill", "#fff")
+</script>
+      </div>
+      <div class="col mb-6">
+        <div id="sigils_timeline"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<br>
+
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Calls</h5>
+    <div class="row row-cols-1 row-cols-md-2">
+      <div class="col mb-6">
+        <div id="pie_calls"></div>
+        <script>var pie_calls = d3.pie().value(function(d) { return d.value; });
+var json_calls = {"true":3526,"false":623};
+var data_calls = pie_calls(d3.entries(json_calls));
+var sum_calls = d3.sum(data_calls, function(d) { return d.data.value; });
+
+var svg_calls = d3.select("#pie_calls")
+  .append("svg")
+    .attr("width", pie_size)
+    .attr("height", pie_size)
+    .append("g")
+      .attr("transform", "translate(" + pie_size / 2 + "," + pie_size / 2 + ")");
+
+svg_calls.selectAll("arcs")
+  .data(data_calls)
+  .enter()
+    .append('path')
+      .attr('fill', function(d) { return strictnessColor(d.data.key); })
+      .attr('d', arcGenerator)
+      .on("mouseover", function(d) { tooltip.style("opacity", 1); })
+      .on("mousemove", tooltip_calls)
+      .on("mouseleave", function(d) { tooltip.style("opacity", 0); });
+
+svg_calls.selectAll("labels")
+  .data(data_calls)
+  .enter()
+    .append('text')
+    .text(function(d) { return toPercent(d.data.value, sum_calls); })
+    .attr("transform", function(d) { return "translate(" + arcGenerator.centroid(d) + ")"; })
+    .style("text-anchor", "middle")
+    .style("font-size", "14px")
+    .style("fill", "#fff")
+</script>
+      </div>
+      <div class="col mb-6">
+        <div id="sigils_timeline"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<br>
+
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Signatures</h5>
+    <div class="row row-cols-1 row-cols-md-2">
+      <div class="col mb-6">
+        <div id="pie_sigs"></div>
+        <script>var pie_sigs = d3.pie().value(function(d) { return d.value; });
+var json_sigs = {"true":174,"false":1620};
+var data_sigs = pie_sigs(d3.entries(json_sigs));
+var sum_sigs = d3.sum(data_sigs, function(d) { return d.data.value; });
+
+var svg_sigs = d3.select("#pie_sigs")
+  .append("svg")
+    .attr("width", pie_size)
+    .attr("height", pie_size)
+    .append("g")
+      .attr("transform", "translate(" + pie_size / 2 + "," + pie_size / 2 + ")");
+
+svg_sigs.selectAll("arcs")
+  .data(data_sigs)
+  .enter()
+    .append('path')
+      .attr('fill', function(d) { return strictnessColor(d.data.key); })
+      .attr('d', arcGenerator)
+      .on("mouseover", function(d) { tooltip.style("opacity", 1); })
+      .on("mousemove", tooltip_sigs)
+      .on("mouseleave", function(d) { tooltip.style("opacity", 0); });
+
+svg_sigs.selectAll("labels")
+  .data(data_sigs)
+  .enter()
+    .append('text')
+    .text(function(d) { return toPercent(d.data.value, sum_sigs); })
+    .attr("transform", function(d) { return "translate(" + arcGenerator.centroid(d) + ")"; })
+    .style("text-anchor", "middle")
+    .style("font-size", "14px")
+    .style("fill", "#fff")
+</script>
+      </div>
+      <div class="col mb-6">
+        <div id="sigils_timeline"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<br>
+
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Strictness Map</h5>
+    <div id="map_sigils"></div>
+    <script>  var root = {children: [{"name":"lib","children":[{"name":"spoom.rb","strictness":"true"},{"name":"spoom","children":[{"name":"cli.rb","strictness":"true"},{"name":"cli","children":[{"name":"command_helper.rb","strictness":"strict"},{"name":"commands","children":[{"name":"bump.rb","strictness":"strict"},{"name":"config.rb","strictness":"true"},{"name":"lsp.rb","strictness":"true"},{"name":"metrics.rb","strictness":"true"},{"name":"run.rb","strictness":"true"}],"score":1.0}],"score":1.0},{"name":"config.rb","strictness":"true"},{"name":"file_tree.rb","strictness":"strict"},{"name":"git.rb","strictness":"strict"},{"name":"printer.rb","strictness":"strict"},{"name":"report.rb","strictness":"true"},{"name":"snapshot.rb","strictness":"strict"},{"name":"sorbet.rb","strictness":"true"},{"name":"sorbet","children":[{"name":"config.rb","strictness":"strict"},{"name":"errors.rb","strictness":"true"},{"name":"lsp.rb","strictness":"true"},{"name":"lsp","children":[{"name":"base.rb","strictness":"true"},{"name":"errors.rb","strictness":"true"},{"name":"structures.rb","strictness":"true"}],"score":1.0},{"name":"metrics.rb","strictness":"strict"},{"name":"sigils.rb","strictness":"strict"}],"score":1.0},{"name":"timeline.rb","strictness":"strict"},{"name":"version.rb","strictness":"true"}],"score":1.0}],"score":1.0},{"name":"test","children":[{"name":"spoom","children":[{"name":"cli","children":[{"name":"cli_test_helper.rb","strictness":"true"},{"name":"commands","children":[{"name":"bump_test.rb","strictness":"true"},{"name":"cli_test.rb","strictness":"true"},{"name":"config_test.rb","strictness":"true"},{"name":"lsp_test.rb","strictness":"true"},{"name":"metrics_test.rb","strictness":"true"},{"name":"run_test.rb","strictness":"true"}],"score":1.0}],"score":1.0},{"name":"file_tree_test.rb","strictness":"true"},{"name":"git_test.rb","strictness":"true"},{"name":"git_test_helper.rb","strictness":"strict"},{"name":"sorbet","children":[{"name":"config_test.rb","strictness":"true"},{"name":"errors_test.rb","strictness":"true"},{"name":"metrics_test.rb","strictness":"true"},{"name":"sigils_test.rb","strictness":"true"},{"name":"version_test.rb","strictness":"true"}],"score":1.0},{"name":"timeline_test.rb","strictness":"true"}],"score":1.0},{"name":"support","children":[{"name":"project-bump","children":[{"name":"test_file.rb","strictness":"strict"}],"score":1.0}],"score":1.0},{"name":"test_helper.rb","strictness":"true"}],"score":1.0}]};
+  var diameter = document.getElementById("map_sigils").clientWidth;
+
+  var svg_sigils = d3.select("#map_sigils")
+    .append("svg")
+      .attr("width", diameter)
+      .attr("height", diameter)
+      .append("g")
+        .attr("transform", "translate(" + diameter / 2 + "," + diameter / 2 + ")");
+
+  var dataHeight = treeHeight(root)
+
+  var opacity = d3.scaleLinear()
+      .domain([0, dataHeight])
+      .range([0, 0.3])
+
+  var pack = d3.pack()
+      .size([diameter, diameter])
+      .padding(2);
+
+  root = d3.hierarchy(root)
+      .sum(function(d) { return d.children ? d.children.length : 1; })
+      .sort(function(a, b) { return b.value - a.value; });
+
+  var focus = root,
+      nodes = pack(root).descendants(),
+      view;
+
+  var mousemove = function(d) {
+    tooltip
+      .html("<b>" + d.data.name + "</b>")
+      .style("left", (d3.event.pageX+20) + "px")
+      .style("top", (d3.event.pageY) + "px")
+  }
+
+  function redraw(){
+
+    var circle = svg_sigils.selectAll("circle")
+      .data(nodes)
+      .enter().append("circle")
+        .attr("class", function(d) { return d.parent ? d.children ? "node" : "node node--leaf" : "node node--root"; })
+        .style("fill", function(d) { return d.children ? dirColor(d.data.score) : strictnessColor(d.data.strictness); })
+        .style("fill-opacity", function(d) { return d.children ? opacity(d.depth) : 1; })
+        .on("click", function(d) { if (focus !== d) zoom(d), d3.event.stopPropagation(); })
+        .on("mouseover", function(d) { tooltip.style("opacity", 1); })
+        .on("mousemove", mousemove)
+        .on("mouseleave", function(d) { tooltip.style("opacity", 0); });
+
+    var text = svg_sigils.selectAll("text")
+      .data(nodes)
+      .enter().append("text")
+        .attr("class", function(d) { return d.children ? "label--dir" : "label--leaf"; })
+        .style("fill-opacity", function(d) { return d.depth <= 1 ? 1 : 0; })
+        .style("display", function(d) { return d.depth <= 1 ? "inline" : "none"; })
+        .text(function(d) { return d.data.name; });
+
+    var node = svg_sigils.selectAll("circle,text");
+
+  function zoomTo(v) {
+    var k = diameter / v[2]; view = v;
+    node.attr("transform", function(d) { return "translate(" + (d.x - v[0]) * k + "," + (d.y - v[1]) * k + ")"; });
+    circle.attr("r", function(d) { return d.r * k; });
+  }
+  zoomTo([root.x, root.y, root.r * 2]);
+
+  }
+
+  svg_sigils.on("click", function() { zoom(root); });
+
+// Draw for the first time to initialize.
+redraw();
+
+// Redraw based on the new size whenever the browser window is resized.
+window.addEventListener("resize", redraw);
+</script>
+  </div>
+</div>
+<br>
+
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Raw Data</h5>
+    <a data-toggle="collapse" href="#collapseRawData">Toogle</a>
+    <div class="collapse" id="collapseRawData">
+      <pre><code>{
+  "files": 62,
+  "modules": 52,
+  "classes": 304,
+  "methods_without_sig": 1620,
+  "methods_with_sig": 174,
+  "calls_untyped": 623,
+  "calls_typed": 3526,
+  "sigils": {
+    "true": 50,
+    "strict": 12
+  }
+}</code></pre>
+    </div>
+  </div>
+</div>
+    <br>
+    <div class="text-center">
+      Generated by <a href="https://github.com/Shopify/spoom">spoom</a>
+      on 2020-09-30 02:18:37 UTC
+    </div>
+  </div>
+</body>
+</html>

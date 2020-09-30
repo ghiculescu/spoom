@@ -1,6 +1,7 @@
 # typed: true
 # frozen_string_literal: true
 
+require_relative '../../report'
 require_relative '../../snapshot'
 require_relative '../../timeline'
 require_relative '../command_helper'
@@ -85,10 +86,12 @@ module Spoom
         desc "report", "produce a typing coverage report"
         option :file, type: :string, default: "spoom_report.html", aliases: :f
         def report
+          in_sorbet_project!
+
+          # TODO Load the data
+          # TODO warn if no data
+
           report = Spoom::Coverage.report
-          # Load the data
-          # Create the report
-          # Generate the html
           File.write(options[:file], report.html)
         end
 
@@ -96,7 +99,7 @@ module Spoom
         option :file, type: :string, default: "spoom_report.html", aliases: :f
         def open
           exec "open #{options[:file]}"
-          # TODO
+          # TODO warn if no data
         end
 
         # git

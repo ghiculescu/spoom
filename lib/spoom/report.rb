@@ -1,9 +1,8 @@
-# typed: false
+# typed: true
 # frozen_string_literal: true
 
 require_relative "file_tree"
-require_relative "git"
-require_relative "metrics"
+require_relative "snapshot"
 
 require "date"
 
@@ -13,12 +12,13 @@ module Spoom
       config = Spoom::Sorbet::Config.parse_file(Spoom::Config::SORBET_CONFIG)
       files = Spoom::Sorbet.srb_files(config)
       files.select! { |file| file =~ /\.rb$/ }
-      FileTree.from_paths(files)
+      FileTree.new(files)
     end
 
     def self.report
       Spoom::Coverage::Report.new(
-        snapshots: [Spoom::Metrics.snapshot],
+        title: File.basename(Spoom::Config::WORKSPACE_PATH),
+        snapshots: [Spoom::Snapshot.snapshot],
         sigils_tree: self.sigils_tree,
       )
     end
@@ -28,19 +28,16 @@ module Spoom
       # TODO sorbet intro
       # TODO timeline
 
-    # def self.sorbet_intro_time
-      # Spoom::Git.exec("git log --diff-filter=A --format='%h %at'  -- sorbet/config")
-    # end
-
     class Report < T::Struct
       extend T::Sig
 
+      const :title, String, default: "Typing Coverage"
       const :sigils_tree, FileTree
-      const :snapshots, T::Array[Spoom::Metrics::Snapshot]
+      const :snapshots, T::Array[Spoom::Snapshot]
 
-      def title
-        return "Typing Coverage" if snapshots.empty?
-        snapshots.last.project
+      sig { returns(Spoom::Snapshot) }
+      def last
+        T.must(snapshots.last)
       end
 
       sig { returns(String) }
@@ -76,7 +73,7 @@ module Spoom
         <<~HTML
           <h1 class="display-3">
             #{title}
-            <span class="badge badge-pill badge-dark" style="font-size: 20%;">#{snapshots.last.commit_sha}</span>
+            <span class="badge badge-pill badge-dark" style="font-size: 20%;">#{last.commit_sha}</span>
           </h1>
           <br>
 
@@ -86,7 +83,7 @@ module Spoom
               <div class="row row-cols-1 row-cols-md-2">
                 <div class="col mb-6">
                   <div id="pie_sigils"></div>
-                  <script>#{pie_chart("sigils", last_sigils)}</script>
+                  <script>#{pie_chart("sigils", last.sigils.select{ |k, v| v })}</script>
                 </div>
                 <div class="col mb-6">
                   <div id="sigils_timeline"></div>
@@ -102,7 +99,7 @@ module Spoom
               <div class="row row-cols-1 row-cols-md-2">
                 <div class="col mb-6">
                   <div id="pie_calls"></div>
-                  <script>#{pie_chart("calls", last_calls)}</script>
+                  <script>#{pie_chart("calls", {true: last.calls_typed, false: last.calls_untyped})}</script>
                 </div>
                 <div class="col mb-6">
                   <div id="sigils_timeline"></div>
@@ -118,7 +115,7 @@ module Spoom
               <div class="row row-cols-1 row-cols-md-2">
                 <div class="col mb-6">
                   <div id="pie_sigs"></div>
-                  <script>#{pie_chart("sigs", last_sigs)}</script>
+                  <script>#{pie_chart("sigs", {true: last.methods_with_sig, false: last.methods_without_sig})}</script>
                 </div>
                 <div class="col mb-6">
                   <div id="sigils_timeline"></div>
@@ -132,7 +129,7 @@ module Spoom
             <div class="card-body">
               <h5 class="card-title">Strictness Map</h5>
               <div id="map_sigils"></div>
-              <script>#{circle_map("sigils", sigils_tree.root)}</script>
+              <script>#{circle_map("sigils", sigils_tree.roots.map{|r| tree_node_to_json(r)}.to_json)}</script>
             </div>
           </div>
           <br>
@@ -142,14 +139,10 @@ module Spoom
               <h5 class="card-title">Raw Data</h5>
               <a data-toggle="collapse" href="#collapseRawData">Toogle</a>
               <div class="collapse" id="collapseRawData">
-                <pre><code>#{JSON.pretty_generate(snapshots.last.metrics.serialize)}</code></pre>
+                <pre><code>#{JSON.pretty_generate(last.serialize)}</code></pre>
               </div>
             </div>
           </div>
-
-          Sorbet version <a href="https://rubygems.org/gems/sorbet/versions/#{snapshots.last.sorbet_version}">
-                  #{snapshots.last.sorbet_version}</a>
-
         HTML
       end
 
@@ -350,7 +343,7 @@ module Spoom
 
       def circle_map(id, data)
         <<~JS
-        var root = #{data.to_json};
+        var root = {children: #{data}};
         var diameter = document.getElementById("map_#{id}").clientWidth;
 
         var svg_#{id} = d3.select("#map_#{id}")
@@ -452,65 +445,35 @@ module Spoom
 
       private
 
-      def last_calls
-        {
-          true: snapshots.last.metrics["types.input.sends.typed"],
-          false: snapshots.last.metrics["types.input.sends.total"] - snapshots.last.metrics["types.input.sends.typed"]
-        }
-      end
-
-      def last_sigils
-        snapshots.last.metrics.files_by_strictness.select{ |k, v| v }
-      end
-
-      def last_sigs
-        {
-          true: snapshots.last.metrics["types.sig.count"],
-          false: snapshots.last.metrics["types.input.methods.total"] - snapshots.last.metrics["types.sig.count"]
-        }
-      end
-
       def format_timestamp(timestamp)
         DateTime.strptime(timestamp.to_s, '%s').strftime('%F %I:%M %p')
       end
-    end
 
-      # def to_json(*args)
-        # obj = { name: name }
-#
-        # if strictness
-          # obj[:strictness] = strictness
-        # end
-#
-        # if children.size > 0
-          # obj[:children] = children.values
-          # obj[:score] = score
-        # end
-#
-        # obj.to_json(*args)
-      # end
-#
-      # def score
-        # unless @score
-          # @score = 0
-          # if name =~ /\.rbi?$/
-            # case strictness
-            # when "true", "strict", "strong"
-              # @score = 1.0
-            # end
-          # elsif !children.empty?
-              # @score = children.values.sum(&:score) / children.size.to_f
-          # end
-        # end
-        # @score
-      # end
+      def tree_node_to_json(node)
+        obj = { name: node.name }
 
-      def strictness
-        return nil unless name =~ /\.rbi?$/
-        unless @strictness
-          @strictness = Spoom::Sorbet::Sigils.file_strictness(path)
+        if node.children.size > 0
+          obj[:children] = node.children.values.map{|n| tree_node_to_json(n)}
+          obj[:score] = tree_node_score(node)
+        else
+          obj[:strictness] = node.strictness
         end
-        @strictness
 
+        obj
+      end
+
+      def tree_node_score(node)
+        score = 0
+        if node.name =~ /\.rbi?$/
+          case node.strictness
+          when "true", "strict", "strong"
+            score = 1.0
+          end
+        elsif !node.children.empty?
+          score = node.children.values.sum {|n| tree_node_score(n)} / node.children.size.to_f
+        end
+        score
+      end
+    end
   end
 end
